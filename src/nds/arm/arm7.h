@@ -8,26 +8,34 @@ namespace twice {
 struct arm7_cpu final : arm_cpu {
 	u8 *pt[PAGE_TABLE_SIZE]{};
 
-	u64 fetch_hits{};
-	u64 fetch_total{};
-	u64 load_hits{};
-	u64 load_total{};
-	u64 store_hits{};
-	u64 store_total{};
+	enum : u32 {
+		TIMING_PAGE_SHIFT = 15,
+		TIMING_PAGE_SIZE = (u32)1 << TIMING_PAGE_SHIFT,
+		TIMING_TABLE_SIZE = (u32)1 << (32 - TIMING_PAGE_SHIFT),
+	};
+
+	/* n32 s32 n16 s16: assume code / data are the same for now */
+	u8 timings[TIMING_TABLE_SIZE][4]{};
 
 	void run() override;
 	void step() override;
 	void arm_jump(u32 addr) override;
 	void thumb_jump(u32 addr) override;
 	void jump_cpsr(u32 addr) override;
-	u32 fetch32(u32 addr) override;
-	u16 fetch16(u32 addr) override;
-	u32 load32(u32 addr) override;
-	u16 load16(u32 addr) override;
-	u8 load8(u32 addr) override;
-	void store32(u32 addr, u32 value) override;
-	void store16(u32 addr, u16 value) override;
-	void store8(u32 addr, u8 value) override;
+	u32 fetch32n(u32 addr);
+	u32 fetch32s(u32 addr);
+	u16 fetch16n(u32 addr);
+	u16 fetch16s(u32 addr);
+	u32 load32(u32 addr, bool nonseq) override;
+	u32 load32n(u32 addr) override;
+	u32 load32s(u32 addr) override;
+	u16 load16n(u32 addr) override;
+	u8 load8n(u32 addr) override;
+	void store32(u32 addr, u32 value, bool nonseq) override;
+	void store32n(u32 addr, u32 value) override;
+	void store32s(u32 addr, u32 value) override;
+	void store16n(u32 addr, u16 value) override;
+	void store8n(u32 addr, u8 value) override;
 	u16 ldrh(u32 addr) override;
 	s16 ldrsh(u32 addr) override;
 
@@ -38,6 +46,16 @@ struct arm7_cpu final : arm_cpu {
 		}
 
 		return halted;
+	}
+
+	void add_cycles_cdi() override
+	{
+		cycles = code_cycles + data_cycles + 1;
+	}
+
+	void add_cycles_cd(u32 internal_cycles = 0) override
+	{
+		cycles = code_cycles + data_cycles + internal_cycles;
 	}
 };
 

@@ -16,6 +16,8 @@ arm_mrs(arm_cpu *cpu)
 	} else {
 		cpu->gpr[rd] = cpu->cpsr;
 	}
+
+	cpu->add_cycles_c();
 }
 
 template <int I, int R>
@@ -65,6 +67,8 @@ arm_msr(arm_cpu *cpu)
 			              (operand & write_mask);
 		}
 	}
+
+	cpu->add_cycles_c();
 }
 
 } // namespace twice::arm::interpreter

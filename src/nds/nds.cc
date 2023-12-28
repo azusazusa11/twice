@@ -295,16 +295,6 @@ void
 nds_dump_prof(nds_ctx *nds)
 {
 	nds->prof.report();
-	LOG("arm9: fetch: %f, load %f, store %f\n",
-			(double)nds->arm9->fetch_hits / nds->arm9->fetch_total,
-			(double)nds->arm9->load_hits / nds->arm9->load_total,
-			(double)nds->arm9->store_hits /
-					nds->arm9->store_total);
-	LOG("arm7: fetch: %f, load %f, store %f\n",
-			(double)nds->arm7->fetch_hits / nds->arm7->fetch_total,
-			(double)nds->arm7->load_hits / nds->arm7->load_total,
-			(double)nds->arm7->store_hits /
-					nds->arm7->store_total);
 }
 
 } // namespace twice

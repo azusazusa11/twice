@@ -65,6 +65,8 @@ arm_sat_add_sub(arm_cpu *cpu)
 		break;
 	}
 	}
+
+	cpu->add_cycles_c();
 }
 
 inline u32
@@ -123,6 +125,8 @@ arm_dsp_multiply(arm_cpu *cpu)
 		cpu->gpr[rd] = a * b;
 		break;
 	}
+
+	cpu->add_cycles_c(OP == 2);
 }
 } // namespace twice::arm::interpreter
 

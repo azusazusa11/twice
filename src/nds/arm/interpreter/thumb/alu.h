@@ -33,6 +33,7 @@ thumb_alu1_2(arm_cpu *cpu)
 
 	cpu->gpr[rd] = r;
 	set_nzcv(cpu, r >> 31, r == 0, carry, overflow);
+	cpu->add_cycles_c();
 }
 
 template <int OP, int RD>
@@ -64,6 +65,8 @@ thumb_alu3(arm_cpu *cpu)
 	} else {
 		set_nzcv(cpu, r >> 31, r == 0, carry, overflow);
 	}
+
+	cpu->add_cycles_c();
 }
 
 template <int OP, int IMM>
@@ -113,6 +116,7 @@ thumb_alu4(arm_cpu *cpu)
 	}
 
 	cpu->gpr[rd] = r;
+	cpu->add_cycles_c();
 }
 
 template <int OP>
@@ -277,6 +281,22 @@ thumb_alu5(arm_cpu *cpu)
 		r = cpu->gpr[rd] = ~rm;
 		set_nz(cpu, r >> 31, r == 0);
 	}
+
+	if (OP == LSL || OP == LSR || OP == ASR || OP == ROR) {
+		cpu->add_cycles_c(1);
+	} else if (OP == MUL) {
+		u32 internal_cycles;
+		if (is_arm9(cpu)) {
+			internal_cycles = 3;
+		} else {
+			internal_cycles = get_mul_internal_cycles(
+					operand & BIT(31) ? ~operand
+							  : operand);
+		}
+		cpu->add_cycles_c(internal_cycles);
+	} else {
+		cpu->add_cycles_c();
+	}
 }
 
 template <int R, int RD>
@@ -288,6 +308,7 @@ thumb_alu6(arm_cpu *cpu)
 	} else {
 		cpu->gpr[RD] = cpu->gpr[13] + ((cpu->opcode & 0xFF) << 2);
 	}
+	cpu->add_cycles_c();
 }
 
 template <int OP>
@@ -299,6 +320,7 @@ thumb_alu7(arm_cpu *cpu)
 	} else {
 		cpu->gpr[13] -= (cpu->opcode & 0x7F) << 2;
 	}
+	cpu->add_cycles_c();
 }
 
 template <int OP>
@@ -311,6 +333,7 @@ thumb_alu8(arm_cpu *cpu)
 
 	if (OP == 0) {
 		u32 r = cpu->gpr[rd] + rm;
+		cpu->add_cycles_c();
 		if (rd == 15) {
 			cpu->thumb_jump(r & ~1);
 		} else {
@@ -323,7 +346,9 @@ thumb_alu8(arm_cpu *cpu)
 		bool overflow;
 		SUB_FLAGS_(rn, rm);
 		set_nzcv(cpu, r >> 31, r == 0, carry, overflow);
+		cpu->add_cycles_c();
 	} else {
+		cpu->add_cycles_c();
 		if (rd == 15) {
 			cpu->thumb_jump(rm & ~1);
 		} else {

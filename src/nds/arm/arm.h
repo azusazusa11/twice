@@ -52,9 +52,11 @@ struct arm_cpu {
 	nds_ctx *nds{};
 	int cpuid{};
 
-	timestamp *cycles{};
+	timestamp *curr_cycles{};
 	timestamp *target_cycles{};
-	u32 cycles_executed{};
+	u32 code_cycles{};
+	u32 data_cycles{};
+	u32 cycles{};
 
 	u32& pc() { return gpr[15]; }
 
@@ -65,17 +67,27 @@ struct arm_cpu {
 	virtual void arm_jump(u32 addr) = 0;
 	virtual void thumb_jump(u32 addr) = 0;
 	virtual void jump_cpsr(u32 addr) = 0;
-	virtual u32 fetch32(u32 addr) = 0;
-	virtual u16 fetch16(u32 addr) = 0;
-	virtual u32 load32(u32 addr) = 0;
-	virtual u16 load16(u32 addr) = 0;
-	virtual u8 load8(u32 addr) = 0;
-	virtual void store32(u32 addr, u32 value) = 0;
-	virtual void store16(u32 addr, u16 value) = 0;
-	virtual void store8(u32 addr, u8 value) = 0;
+	virtual u32 load32(u32 addr, bool nonseq) = 0;
+	virtual u32 load32n(u32 addr) = 0;
+	virtual u32 load32s(u32 addr) = 0;
+	virtual u16 load16n(u32 addr) = 0;
+	virtual u8 load8n(u32 addr) = 0;
+	virtual void store32(u32 addr, u32 value, bool nonseq) = 0;
+	virtual void store32n(u32 addr, u32 value) = 0;
+	virtual void store32s(u32 addr, u32 value) = 0;
+	virtual void store16n(u32 addr, u16 value) = 0;
+	virtual void store8n(u32 addr, u8 value) = 0;
 	virtual u16 ldrh(u32 addr) = 0;
 	virtual s16 ldrsh(u32 addr) = 0;
 	virtual bool check_halted() = 0;
+
+	void add_cycles_c(u32 internal_cycles = 0)
+	{
+		cycles = code_cycles + internal_cycles;
+	}
+
+	virtual void add_cycles_cdi() = 0;
+	virtual void add_cycles_cd(u32 internal_cycles = 0) = 0;
 };
 
 void arm_init(nds_ctx *nds, int cpuid);

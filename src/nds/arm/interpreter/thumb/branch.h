@@ -67,6 +67,8 @@ thumb_b1(arm_cpu *cpu)
 		jump = false;
 	}
 
+	cpu->add_cycles_c();
+
 	if (jump) {
 		u32 offset = (s16)(cpu->opcode << 8) >> 7;
 		cpu->thumb_jump(cpu->pc() + offset);
@@ -76,6 +78,7 @@ thumb_b1(arm_cpu *cpu)
 inline void
 thumb_b2(arm_cpu *cpu)
 {
+	cpu->add_cycles_c();
 	u32 offset = (s16)(cpu->opcode << 5) >> 4;
 	cpu->thumb_jump(cpu->pc() + offset);
 }
@@ -85,9 +88,11 @@ void
 thumb_b_pair(arm_cpu *cpu)
 {
 	if (H == 2) {
+		cpu->add_cycles_c();
 		u32 offset = (s32)(cpu->opcode << 21) >> 9;
 		cpu->gpr[14] = cpu->pc() + offset;
 	} else if (H == 3) {
+		cpu->add_cycles_c();
 		u32 ret_addr = cpu->pc() - 2;
 		u32 jump_addr = cpu->gpr[14] + ((cpu->opcode & 0x7FF) << 1);
 		cpu->thumb_jump(jump_addr & ~1);
@@ -98,6 +103,7 @@ thumb_b_pair(arm_cpu *cpu)
 			return;
 		}
 
+		cpu->add_cycles_c();
 		u32 ret_addr = cpu->pc() - 2;
 		u32 jump_addr = cpu->gpr[14] + ((cpu->opcode & 0x7FF) << 1);
 		cpu->cpsr &= ~0x20;
@@ -109,6 +115,7 @@ thumb_b_pair(arm_cpu *cpu)
 inline void
 thumb_bx(arm_cpu *cpu)
 {
+	cpu->add_cycles_c();
 	u32 addr = cpu->gpr[cpu->opcode >> 3 & 0xF];
 	thumb_do_bx(cpu, addr);
 }
@@ -121,6 +128,7 @@ thumb_blx2(arm_cpu *cpu)
 		return;
 	}
 
+	cpu->add_cycles_c();
 	u32 addr = cpu->gpr[cpu->opcode >> 3 & 0xF];
 	cpu->gpr[14] = (cpu->pc() - 2) | 1;
 	thumb_do_bx(cpu, addr);

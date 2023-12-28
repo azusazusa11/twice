@@ -14,9 +14,9 @@ arm_clz(arm_cpu *cpu)
 		return;
 	}
 
+	cpu->add_cycles_c();
 	u32 rd = cpu->opcode >> 12 & 0xF;
 	u32 rm = cpu->opcode & 0xF;
-
 	cpu->gpr[rd] = std::countl_zero(cpu->gpr[rm]);
 }
 

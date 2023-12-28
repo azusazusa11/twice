@@ -20,7 +20,7 @@ arm_init(nds_ctx *nds, int cpuid)
 	arm_cpu *cpu = nds->cpu[cpuid];
 	cpu->nds = nds;
 	cpu->cpuid = cpuid;
-	cpu->cycles = &nds->arm_cycles[cpuid];
+	cpu->curr_cycles = &nds->arm_cycles[cpuid];
 	cpu->target_cycles = &nds->arm_target_cycles[cpuid];
 }
 
@@ -121,7 +121,7 @@ void
 halt_cpu(arm_cpu *cpu, int halt_bits)
 {
 	cpu->halted |= halt_bits;
-	*cpu->target_cycles = *cpu->cycles;
+	*cpu->target_cycles = *cpu->curr_cycles;
 }
 
 void

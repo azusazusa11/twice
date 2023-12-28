@@ -25,6 +25,19 @@ arm_multiply(arm_cpu *cpu)
 	if (S) {
 		set_nz(cpu, r >> 31, r == 0);
 	}
+
+	u32 internal_cycles;
+	if (is_arm9(cpu)) {
+		internal_cycles = S ? 3 : 1;
+	} else {
+		internal_cycles = rs & BIT(31) ? get_mul_internal_cycles(~rs)
+		                               : get_mul_internal_cycles(rs);
+		if (A) {
+			internal_cycles += 1;
+		}
+	}
+
+	cpu->add_cycles_c(internal_cycles);
 }
 
 template <int U, int A, int S>
@@ -54,6 +67,17 @@ arm_multiply_long(arm_cpu *cpu)
 	if (S) {
 		set_nz(cpu, r >> 63, r == 0);
 	}
+
+	u32 internal_cycles;
+	if (is_arm9(cpu)) {
+		internal_cycles = S ? 4 : 2;
+	} else {
+		internal_cycles = get_mul_internal_cycles(
+				(U && rs & BIT(31)) ? ~rs : rs);
+		internal_cycles += A ? 2 : 1;
+	}
+
+	cpu->add_cycles_c(internal_cycles);
 }
 
 } // namespace twice::arm::interpreter

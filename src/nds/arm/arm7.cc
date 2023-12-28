@@ -6,6 +6,9 @@
 
 namespace twice {
 
+static const u8 gba_rom_nonseq_timings[4] = { 10, 8, 6, 18 };
+static const u8 gba_rom_seq_timings[2] = { 6, 4 };
+
 void
 arm7_direct_boot(arm7_cpu *cpu, u32 entry_addr)
 {
@@ -22,19 +25,11 @@ arm7_direct_boot(arm7_cpu *cpu, u32 entry_addr)
 void
 arm7_frame_start(arm7_cpu *cpu)
 {
-	cpu->cycles_executed = 0;
-	cpu->fetch_hits = 0;
-	cpu->fetch_total = 0;
-	cpu->load_hits = 0;
-	cpu->load_total = 0;
-	cpu->store_hits = 0;
-	cpu->store_total = 0;
 }
 
 void
 arm7_frame_end(arm7_cpu *cpu)
 {
-	cpu->nds->arm7_usage = cpu->cycles_executed / 560190.0;
 }
 
 void
@@ -42,14 +37,14 @@ arm7_cpu::run()
 {
 	if (halted) {
 		if (check_halted()) {
-			*cycles = *target_cycles;
+			*curr_cycles = *target_cycles;
 			return;
 		} else if (interrupt) {
 			arm_do_irq(this);
 		}
 	}
 
-	while (*cycles < *target_cycles) {
+	while (*curr_cycles < *target_cycles) {
 		step();
 	}
 }
@@ -63,19 +58,21 @@ arm7_cpu::step()
 		pc() += 2;
 		opcode = pipeline[0];
 		pipeline[0] = pipeline[1];
-		pipeline[1] = fetch16(pc());
+		pipeline[1] = fetch16s(pc());
 		thumb_inst_lut[opcode >> 6 & 0x3FF](this);
 	} else {
 		pc() += 4;
 		opcode = pipeline[0];
 		pipeline[0] = pipeline[1];
-		pipeline[1] = fetch32(pc());
+		pipeline[1] = fetch32s(pc());
 
 		u32 cond = opcode >> 28;
 		if (cond == 0xE || check_cond(cond, cpsr)) {
 			u32 op1 = opcode >> 20 & 0xFF;
 			u32 op2 = opcode >> 4 & 0xF;
 			arm_inst_lut[op1 << 4 | op2](this);
+		} else {
+			add_cycles_c();
 		}
 	}
 
@@ -83,8 +80,8 @@ arm7_cpu::step()
 		arm_do_irq(this);
 	}
 
-	*cycles += 1;
-	cycles_executed += 1;
+	*curr_cycles += cycles;
+	cycles = 0;
 }
 
 static bool
@@ -97,16 +94,18 @@ void
 arm7_cpu::arm_jump(u32 addr)
 {
 	pc() = addr + 4;
-	pipeline[0] = fetch32(addr);
-	pipeline[1] = fetch32(addr + 4);
+	pipeline[0] = fetch32n(addr);
+	pipeline[1] = fetch32s(addr + 4);
+	cycles += code_cycles;
 }
 
 void
 arm7_cpu::thumb_jump(u32 addr)
 {
 	pc() = addr + 2;
-	pipeline[0] = fetch16(addr);
-	pipeline[1] = fetch16(addr + 2);
+	pipeline[0] = fetch16n(addr);
+	pipeline[1] = fetch16s(addr + 2);
+	cycles += code_cycles;
 }
 
 void
@@ -126,11 +125,8 @@ template <typename T>
 static T
 fetch(arm7_cpu *cpu, u32 addr)
 {
-	cpu->fetch_total++;
-
 	u8 *p = cpu->pt[addr >> arm_cpu::PAGE_SHIFT];
 	if (p) {
-		cpu->fetch_hits++;
 		return readarr<T>(p, addr & arm_cpu::PAGE_MASK);
 	}
 
@@ -141,11 +137,8 @@ template <typename T>
 static T
 load(arm7_cpu *cpu, u32 addr)
 {
-	cpu->load_total++;
-
 	u8 *p = cpu->pt[addr >> arm_cpu::PAGE_SHIFT];
 	if (p) {
-		cpu->load_hits++;
 		return readarr<T>(p, addr & arm_cpu::PAGE_MASK);
 	}
 
@@ -156,11 +149,8 @@ template <typename T>
 static void
 store(arm7_cpu *cpu, u32 addr, T value)
 {
-	cpu->store_total++;
-
 	u8 *p = cpu->pt[addr >> arm_cpu::PAGE_SHIFT];
 	if (p) {
-		cpu->store_hits++;
 		writearr<T>(p, addr & arm_cpu::PAGE_MASK, value);
 		return;
 	}
@@ -169,71 +159,119 @@ store(arm7_cpu *cpu, u32 addr, T value)
 }
 
 u32
-arm7_cpu::fetch32(u32 addr)
+arm7_cpu::fetch32n(u32 addr)
 {
+	code_cycles = timings[addr >> TIMING_PAGE_SHIFT][0];
+	return fetch<u32>(this, addr);
+}
+
+u32
+arm7_cpu::fetch32s(u32 addr)
+{
+	code_cycles += timings[addr >> TIMING_PAGE_SHIFT][1];
 	return fetch<u32>(this, addr);
 }
 
 u16
-arm7_cpu::fetch16(u32 addr)
+arm7_cpu::fetch16n(u32 addr)
 {
+	code_cycles = timings[addr >> TIMING_PAGE_SHIFT][2];
+	return fetch<u16>(this, addr);
+}
+
+u16
+arm7_cpu::fetch16s(u32 addr)
+{
+	code_cycles += timings[addr >> TIMING_PAGE_SHIFT][3];
 	return fetch<u16>(this, addr);
 }
 
 u32
-arm7_cpu::load32(u32 addr)
+arm7_cpu::load32(u32 addr, bool nonseq)
 {
+	return nonseq ? load32n(addr) : load32s(addr);
+}
+
+u32
+arm7_cpu::load32n(u32 addr)
+{
+	data_cycles = timings[addr >> TIMING_PAGE_SHIFT][0];
+	return load<u32>(this, addr);
+}
+
+u32
+arm7_cpu::load32s(u32 addr)
+{
+	data_cycles += timings[addr >> TIMING_PAGE_SHIFT][1];
 	return load<u32>(this, addr);
 }
 
 u16
-arm7_cpu::load16(u32 addr)
+arm7_cpu::load16n(u32 addr)
 {
+	data_cycles = timings[addr >> TIMING_PAGE_SHIFT][2];
 	return load<u16>(this, addr);
 }
 
 u8
-arm7_cpu::load8(u32 addr)
+arm7_cpu::load8n(u32 addr)
 {
+	data_cycles = timings[addr >> TIMING_PAGE_SHIFT][2];
 	return load<u8>(this, addr);
 }
 
 void
-arm7_cpu::store32(u32 addr, u32 value)
+arm7_cpu::store32(u32 addr, u32 value, bool nonseq)
 {
+	nonseq ? store32n(addr, value) : store32s(addr, value);
+}
+
+void
+arm7_cpu::store32n(u32 addr, u32 value)
+{
+	data_cycles = timings[addr >> TIMING_PAGE_SHIFT][0];
 	store<u32>(this, addr, value);
 }
 
 void
-arm7_cpu::store16(u32 addr, u16 value)
+arm7_cpu::store32s(u32 addr, u32 value)
 {
+	data_cycles += timings[addr >> TIMING_PAGE_SHIFT][1];
+	store<u32>(this, addr, value);
+}
+
+void
+arm7_cpu::store16n(u32 addr, u16 value)
+{
+	data_cycles = timings[addr >> TIMING_PAGE_SHIFT][2];
 	store<u16>(this, addr, value);
 }
 
 void
-arm7_cpu::store8(u32 addr, u8 value)
+arm7_cpu::store8n(u32 addr, u8 value)
 {
+	data_cycles = timings[addr >> TIMING_PAGE_SHIFT][2];
 	store<u8>(this, addr, value);
 }
 
 u16
 arm7_cpu::ldrh(u32 addr)
 {
-	return std::rotr(load16(addr & ~1), (addr & 1) << 3);
+	return std::rotr(load16n(addr & ~1), (addr & 1) << 3);
 }
 
 s16
 arm7_cpu::ldrsh(u32 addr)
 {
 	if (addr & 1) {
-		return (s8)load8(addr);
+		return (s8)load8n(addr);
 	} else {
-		return load16(addr);
+		return load16n(addr);
 	}
 }
 
 static void
-update_arm7_page_table(nds_ctx *nds, u8 **pt, u64 start, u64 end)
+update_arm7_page_table(nds_ctx *nds, u8 **pt, u8 (*tt)[4], u64 start, u64 end)
 {
 	for (u64 addr = start; addr < end; addr += arm_cpu::PAGE_SIZE) {
 		u64 page = addr >> arm_cpu::PAGE_SHIFT;
@@ -255,12 +293,58 @@ update_arm7_page_table(nds_ctx *nds, u8 **pt, u64 start, u64 end)
 			pt[page] = nullptr;
 		}
 	}
+
+	for (u64 addr = start; addr < end;
+			addr += arm7_cpu::TIMING_PAGE_SIZE) {
+		u64 page = addr >> arm7_cpu::TIMING_PAGE_SHIFT;
+		switch (addr >> 23) {
+		case 0x20 >> 3:
+			tt[page][0] = 9;
+			tt[page][1] = 2;
+			tt[page][2] = 8;
+			tt[page][3] = 1;
+			break;
+		case 0x60 >> 3:
+		case 0x68 >> 3:
+			tt[page][0] = 2;
+			tt[page][1] = 2;
+			tt[page][2] = 1;
+			tt[page][3] = 1;
+			break;
+		case 0x80 >> 3:
+		case 0x88 >> 3:
+		case 0x90 >> 3:
+		case 0x98 >> 3:
+			if (nds->gba_slot_cpu == 1) {
+				u8 n16 = gba_rom_nonseq_timings
+						[nds->exmem[1] >> 2 & 3];
+				u8 s16 = gba_rom_seq_timings
+						[nds->exmem[1] >> 4 & 1];
+				tt[page][0] = n16 + s16;
+				tt[page][1] = s16 + s16;
+				tt[page][2] = n16;
+				tt[page][3] = s16;
+			} else {
+				tt[page][0] = 1;
+				tt[page][1] = 1;
+				tt[page][2] = 1;
+				tt[page][3] = 1;
+			}
+			break;
+		default:
+			tt[page][0] = 1;
+			tt[page][1] = 1;
+			tt[page][2] = 1;
+			tt[page][3] = 1;
+		}
+	}
 }
 
 void
 update_arm7_page_tables(arm7_cpu *cpu)
 {
-	update_arm7_page_table(cpu->nds, cpu->pt, 0, 0x100000000);
+	update_arm7_page_table(
+			cpu->nds, cpu->pt, cpu->timings, 0, 0x100000000);
 }
 
 } // namespace twice

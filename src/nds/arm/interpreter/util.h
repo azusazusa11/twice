@@ -8,6 +8,21 @@
 
 namespace twice::arm::interpreter {
 
+inline u32
+get_mul_internal_cycles(u32 rs)
+{
+	int leading = std::countl_zero(rs);
+	if (leading < 8) {
+		return 4;
+	} else if (leading < 16) {
+		return 3;
+	} else if (leading < 24) {
+		return 2;
+	} else {
+		return 1;
+	}
+}
+
 inline bool
 in_privileged_mode(arm_cpu *cpu)
 {
@@ -109,44 +124,46 @@ thumb_do_bx(arm_cpu *cpu, u32 addr)
 inline u32
 arm_do_ldr(arm_cpu *cpu, u32 addr)
 {
-	return std::rotr(cpu->load32(addr & ~3), (addr & 3) << 3);
+	return std::rotr(cpu->load32n(addr & ~3), (addr & 3) << 3);
 }
 
 inline void
 arm_do_str(arm_cpu *cpu, u32 addr, u32 value)
 {
-	cpu->store32(addr & ~3, value);
+	cpu->store32n(addr & ~3, value);
 }
 
 inline void
 arm_do_strh(arm_cpu *cpu, u32 addr, u16 value)
 {
-	cpu->store16(addr & ~1, value);
+	cpu->store16n(addr & ~1, value);
 }
 
 inline u8
 arm_do_ldrb(arm_cpu *cpu, u32 addr)
 {
-	return cpu->load8(addr);
+	return cpu->load8n(addr);
 }
 
 inline void
 arm_do_strb(arm_cpu *cpu, u32 addr, u8 value)
 {
-	cpu->store8(addr, value);
+	cpu->store8n(addr, value);
 }
 
 inline s8
 arm_do_ldrsb(arm_cpu *cpu, u32 addr)
 {
-	return cpu->load8(addr);
+	return cpu->load8n(addr);
 }
 
 #define TWICE_ARM_LDM_(start_, end_, arr_, off_)                              \
 	do {                                                                  \
 		for (int i = (start_); i <= (end_); i++) {                    \
 			if (register_list & BIT(i)) {                         \
-				(arr_)[i + (off_)] = cpu->load32(addr);       \
+				(arr_)[i + (off_)] =                          \
+						cpu->load32(addr, nonseq);    \
+				nonseq = false;                               \
 				addr += 4;                                    \
 			}                                                     \
 		}                                                             \
@@ -156,7 +173,9 @@ arm_do_ldrsb(arm_cpu *cpu, u32 addr)
 	do {                                                                  \
 		for (int i = (start_); i <= (end_); i++) {                    \
 			if (register_list & BIT(i)) {                         \
-				cpu->store32(addr, (arr_)[i + (off_)]);       \
+				cpu->store32(addr, (arr_)[i + (off_)],        \
+						nonseq);                      \
+				nonseq = false;                               \
 				addr += 4;                                    \
 			}                                                     \
 		}                                                             \

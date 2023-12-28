@@ -8,6 +8,9 @@
 
 namespace twice {
 
+static const u8 gba_rom_nonseq_timings[4] = { 26, 22, 18, 42 };
+static const u8 gba_rom_seq_timings[2] = { 12, 8 };
+
 void
 arm9_direct_boot(arm9_cpu *cpu, u32 entry_addr)
 {
@@ -28,19 +31,11 @@ arm9_direct_boot(arm9_cpu *cpu, u32 entry_addr)
 void
 arm9_frame_start(arm9_cpu *cpu)
 {
-	cpu->cycles_executed = 0;
-	cpu->fetch_hits = 0;
-	cpu->fetch_total = 0;
-	cpu->load_hits = 0;
-	cpu->load_total = 0;
-	cpu->store_hits = 0;
-	cpu->store_total = 0;
 }
 
 void
 arm9_frame_end(arm9_cpu *cpu)
 {
-	cpu->nds->arm9_usage = cpu->cycles_executed / 1120380.0;
 }
 
 void
@@ -48,14 +43,14 @@ arm9_cpu::run()
 {
 	if (halted) {
 		if (check_halted()) {
-			*cycles = *target_cycles;
+			*curr_cycles = *target_cycles;
 			return;
 		} else if (interrupt) {
 			arm_do_irq(this);
 		}
 	}
 
-	while (*cycles < *target_cycles) {
+	while (*curr_cycles < *target_cycles) {
 		step();
 	}
 }
@@ -67,15 +62,20 @@ arm9_cpu::step()
 {
 	if (cpsr & 0x20) {
 		pc() += 2;
-		opcode = pipeline[0];
+		opcode = pipeline[0] & 0xFFFF;
 		pipeline[0] = pipeline[1];
-		pipeline[1] = fetch16(pc());
+		if (pc() & 2) {
+			pipeline[1] >>= 16;
+			code_cycles = 0;
+		} else {
+			pipeline[1] = fetch32n(pc());
+		}
 		thumb_inst_lut[opcode >> 6 & 0x3FF](this);
 	} else {
 		pc() += 4;
 		opcode = pipeline[0];
 		pipeline[0] = pipeline[1];
-		pipeline[1] = fetch32(pc());
+		pipeline[1] = fetch32n(pc());
 
 		u32 cond = opcode >> 28;
 		if (cond == 0xE || check_cond(cond, cpsr)) {
@@ -88,7 +88,10 @@ arm9_cpu::step()
 
 			gpr[14] = pc() - 4;
 			cpsr |= 0x20;
+			add_cycles_c();
 			thumb_jump(pc() + offset);
+		} else {
+			add_cycles_c();
 		}
 	}
 
@@ -96,8 +99,8 @@ arm9_cpu::step()
 		arm_do_irq(this);
 	}
 
-	*cycles += 1;
-	cycles_executed += 1;
+	*curr_cycles += cycles;
+	cycles = 0;
 }
 
 static bool
@@ -110,16 +113,28 @@ void
 arm9_cpu::arm_jump(u32 addr)
 {
 	pc() = addr + 4;
-	pipeline[0] = fetch32(addr);
-	pipeline[1] = fetch32(addr + 4);
+	pipeline[0] = fetch32n(addr);
+	cycles += code_cycles;
+	pipeline[1] = fetch32n(addr + 4);
+	cycles += code_cycles;
 }
 
 void
 arm9_cpu::thumb_jump(u32 addr)
 {
 	pc() = addr + 2;
-	pipeline[0] = fetch16(addr);
-	pipeline[1] = fetch16(addr + 2);
+
+	if (addr & 2) {
+		pipeline[0] = fetch32n(addr - 2) >> 16;
+		cycles += code_cycles;
+		pipeline[1] = fetch32n(addr + 2);
+		cycles += code_cycles;
+	} else {
+		u32 opc = fetch32n(addr);
+		cycles += code_cycles;
+		pipeline[0] = opc & 0xFFFF;
+		pipeline[1] = opc >> 16;
+	}
 }
 
 void
@@ -139,11 +154,8 @@ template <typename T>
 static T
 fetch(arm9_cpu *cpu, u32 addr)
 {
-	cpu->fetch_total++;
-
 	u8 *p = cpu->fetch_pt[addr >> arm_cpu::PAGE_SHIFT];
 	if (p) {
-		cpu->fetch_hits++;
 		return readarr<T>(p, addr & arm_cpu::PAGE_MASK);
 	}
 
@@ -158,11 +170,8 @@ template <typename T>
 static T
 load(arm9_cpu *cpu, u32 addr)
 {
-	cpu->load_total++;
-
 	u8 *p = cpu->load_pt[addr >> arm_cpu::PAGE_SHIFT];
 	if (p) {
-		cpu->load_hits++;
 		return readarr<T>(p, addr & arm_cpu::PAGE_MASK);
 	}
 
@@ -181,11 +190,8 @@ template <typename T>
 static void
 store(arm9_cpu *cpu, u32 addr, T value)
 {
-	cpu->store_total++;
-
 	u8 *p = cpu->store_pt[addr >> arm_cpu::PAGE_SHIFT];
 	if (p) {
-		cpu->store_hits++;
 		writearr<T>(p, addr & arm_cpu::PAGE_MASK, value);
 		return;
 	}
@@ -205,67 +211,94 @@ store(arm9_cpu *cpu, u32 addr, T value)
 }
 
 u32
-arm9_cpu::fetch32(u32 addr)
+arm9_cpu::fetch32n(u32 addr)
 {
+	code_cycles = fetch_timings[addr >> TIME_PAGE_SHIFT][0];
 	return fetch<u32>(this, addr);
 }
 
-u16
-arm9_cpu::fetch16(u32 addr)
+u32
+arm9_cpu::load32(u32 addr, bool nonseq)
 {
-	return fetch<u16>(this, addr);
+	return nonseq ? load32n(addr) : load32s(addr);
 }
 
 u32
-arm9_cpu::load32(u32 addr)
+arm9_cpu::load32n(u32 addr)
 {
+	data_cycles = load_timings[addr >> TIME_PAGE_SHIFT][0];
+	return load<u32>(this, addr);
+}
+
+u32
+arm9_cpu::load32s(u32 addr)
+{
+	data_cycles += load_timings[addr >> TIME_PAGE_SHIFT][1];
 	return load<u32>(this, addr);
 }
 
 u16
-arm9_cpu::load16(u32 addr)
+arm9_cpu::load16n(u32 addr)
 {
+	data_cycles = load_timings[addr >> TIME_PAGE_SHIFT][2];
 	return load<u16>(this, addr);
 }
 
 u8
-arm9_cpu::load8(u32 addr)
+arm9_cpu::load8n(u32 addr)
 {
+	data_cycles = load_timings[addr >> TIME_PAGE_SHIFT][2];
 	return load<u8>(this, addr);
 }
 
 void
-arm9_cpu::store32(u32 addr, u32 value)
+arm9_cpu::store32(u32 addr, u32 value, bool nonseq)
 {
+	nonseq ? store32n(addr, value) : store32s(addr, value);
+}
+
+void
+arm9_cpu::store32n(u32 addr, u32 value)
+{
+	data_cycles = store_timings[addr >> TIME_PAGE_SHIFT][0];
 	store<u32>(this, addr, value);
 }
 
 void
-arm9_cpu::store16(u32 addr, u16 value)
+arm9_cpu::store32s(u32 addr, u32 value)
 {
+	data_cycles += store_timings[addr >> TIME_PAGE_SHIFT][1];
+	store<u32>(this, addr, value);
+}
+
+void
+arm9_cpu::store16n(u32 addr, u16 value)
+{
+	data_cycles = store_timings[addr >> TIME_PAGE_SHIFT][2];
 	store<u16>(this, addr, value);
 }
 
 void
-arm9_cpu::store8(u32 addr, u8 value)
+arm9_cpu::store8n(u32 addr, u8 value)
 {
+	data_cycles = store_timings[addr >> TIME_PAGE_SHIFT][2];
 	store<u8>(this, addr, value);
 }
 
 u16
 arm9_cpu::ldrh(u32 addr)
 {
-	return load16(addr & ~1);
+	return load16n(addr & ~1);
 }
 
 s16
 arm9_cpu::ldrsh(u32 addr)
 {
-	return load16(addr & ~1);
+	return load16n(addr & ~1);
 }
 
 static void
-reset_page_table_read(nds_ctx *nds, u8 **pt, u64 start, u64 end)
+reset_page_table(nds_ctx *nds, u8 **pt, u64 start, u64 end)
 {
 	for (u64 addr = start; addr < end; addr += arm_cpu::PAGE_SIZE) {
 		u64 page = addr >> arm_cpu::PAGE_SHIFT;
@@ -287,30 +320,92 @@ reset_page_table_read(nds_ctx *nds, u8 **pt, u64 start, u64 end)
 }
 
 static void
-reset_page_table_write(nds_ctx *nds, u8 **pt, u64 start, u64 end)
+reset_time_table(nds_ctx *nds, u8 (*ft)[4], u8 (*lt)[4], u8 (*st)[4],
+		u64 start, u64 end)
 {
-	for (u64 addr = start; addr < end; addr += arm_cpu::PAGE_SIZE) {
-		u64 page = addr >> arm_cpu::PAGE_SHIFT;
+	for (u64 addr = start; addr < end; addr += arm9_cpu::TIME_PAGE_SIZE) {
+		bool def = false;
+		u64 page = addr >> arm9_cpu::TIME_PAGE_SHIFT;
 		switch (addr >> 24) {
 		case 0x2:
-			pt[page] = &nds->main_ram[addr & MAIN_RAM_MASK];
+			ft[page][0] = 1;
+			lt[page][0] = 1;
+			lt[page][1] = 1;
+			lt[page][2] = 1;
+			lt[page][3] = 1;
+			st[page][0] = 1;
+			st[page][1] = 1;
+			st[page][2] = 1;
+			st[page][3] = 1;
 			break;
 		case 0x3:
-		{
-			u8 *p = nds->shared_wram_p[0];
-			pt[page] = &p[addr & nds->shared_wram_mask[0]];
+		case 0x4:
+		case 0x7:
+		case 0xFF:
+			ft[page][0] = 8;
+			lt[page][0] = 8;
+			lt[page][1] = 2;
+			lt[page][2] = 8;
+			lt[page][3] = 2;
+			st[page][0] = 8;
+			st[page][1] = 2;
+			st[page][2] = 8;
+			st[page][3] = 2;
 			break;
-		}
+		case 0x5:
+		case 0x6:
+			ft[page][0] = 10;
+			lt[page][0] = 10;
+			lt[page][1] = 4;
+			lt[page][2] = 8;
+			lt[page][3] = 2;
+			st[page][0] = 10;
+			st[page][1] = 4;
+			st[page][2] = 8;
+			st[page][3] = 2;
+			break;
+		case 0x8:
+		case 0x9:
+			if (nds->gba_slot_cpu == 0) {
+				u8 n16 = gba_rom_nonseq_timings
+						[nds->exmem[0] >> 2 & 3];
+				u8 s16 = gba_rom_seq_timings
+						[nds->exmem[0] >> 4 & 1];
+				ft[page][0] = n16 + s16;
+				lt[page][0] = n16 + s16;
+				lt[page][1] = s16 + s16;
+				lt[page][2] = n16;
+				lt[page][3] = s16;
+				st[page][0] = n16 + s16;
+				st[page][1] = s16 + s16;
+				st[page][2] = n16;
+				st[page][3] = s16;
+			} else {
+				def = true;
+			}
+			break;
 		default:
-			pt[page] = nullptr;
-			break;
+			def = true;
+		}
+
+		if (def) {
+			ft[page][0] = 1;
+			lt[page][0] = 1;
+			lt[page][1] = 1;
+			lt[page][2] = 1;
+			lt[page][3] = 1;
+			st[page][0] = 1;
+			st[page][1] = 1;
+			st[page][2] = 1;
+			st[page][3] = 1;
 		}
 	}
 }
 
 static void reset_arm9_page_tables(arm9_cpu *cpu);
-static void map_dtcm_pages(arm9_cpu *cpu, u8 **pt, u64 start, u64 end);
-static void map_itcm_pages(arm9_cpu *cpu, u8 **pt, u64 end);
+static void map_dtcm_pages(
+		arm9_cpu *cpu, u8 **pt, u8 (*tt)[4], u64 start, u64 end);
+static void map_itcm_pages(arm9_cpu *cpu, u8 **pt, u8 (*tt)[4], u64 end);
 
 void
 update_arm9_page_tables(arm9_cpu *cpu)
@@ -321,31 +416,37 @@ update_arm9_page_tables(arm9_cpu *cpu)
 	u64 itcm_end = (u64)~cpu->itcm_addr_mask + 1;
 
 	if (cpu->read_dtcm) {
-		map_dtcm_pages(cpu, cpu->load_pt, cpu->dtcm_base, dtcm_end);
+		map_dtcm_pages(cpu, cpu->load_pt, cpu->load_timings,
+				cpu->dtcm_base, dtcm_end);
 	}
 	if (cpu->read_itcm) {
-		map_itcm_pages(cpu, cpu->load_pt, itcm_end);
-		map_itcm_pages(cpu, cpu->fetch_pt, itcm_end);
+		map_itcm_pages(cpu, cpu->load_pt, cpu->load_timings, itcm_end);
+		map_itcm_pages(cpu, cpu->fetch_pt, cpu->fetch_timings,
+				itcm_end);
 	}
 
 	if (cpu->write_dtcm) {
-		map_dtcm_pages(cpu, cpu->store_pt, cpu->dtcm_base, dtcm_end);
+		map_dtcm_pages(cpu, cpu->store_pt, cpu->store_timings,
+				cpu->dtcm_base, dtcm_end);
 	}
 	if (cpu->write_itcm) {
-		map_itcm_pages(cpu, cpu->store_pt, itcm_end);
+		map_itcm_pages(cpu, cpu->store_pt, cpu->store_timings,
+				itcm_end);
 	}
 }
 
 static void
 reset_arm9_page_tables(arm9_cpu *cpu)
 {
-	reset_page_table_read(cpu->nds, cpu->fetch_pt, 0, 0x100000000);
-	reset_page_table_read(cpu->nds, cpu->load_pt, 0, 0x100000000);
-	reset_page_table_write(cpu->nds, cpu->store_pt, 0, 0x100000000);
+	reset_page_table(cpu->nds, cpu->fetch_pt, 0, 0x100000000);
+	reset_page_table(cpu->nds, cpu->load_pt, 0, 0x100000000);
+	reset_page_table(cpu->nds, cpu->store_pt, 0, 0x100000000);
+	reset_time_table(cpu->nds, cpu->fetch_timings, cpu->load_timings,
+			cpu->store_timings, 0, 0x100000000);
 }
 
 static void
-map_dtcm_pages(arm9_cpu *cpu, u8 **pt, u64 start, u64 end)
+map_dtcm_pages(arm9_cpu *cpu, u8 **pt, u8 (*tt)[4], u64 start, u64 end)
 {
 	bool null_page = (end - start) < arm_cpu::PAGE_SIZE;
 
@@ -354,10 +455,18 @@ map_dtcm_pages(arm9_cpu *cpu, u8 **pt, u64 start, u64 end)
 		pt[page] = null_page ? nullptr
 		                     : &cpu->dtcm[addr & cpu->dtcm_array_mask];
 	}
+
+	for (u64 addr = start; addr < end; addr += arm9_cpu::TIME_PAGE_SIZE) {
+		u64 page = addr >> arm9_cpu::TIME_PAGE_SHIFT;
+		tt[page][0] = 1;
+		tt[page][1] = 1;
+		tt[page][2] = 1;
+		tt[page][3] = 1;
+	}
 }
 
 static void
-map_itcm_pages(arm9_cpu *cpu, u8 **pt, u64 end)
+map_itcm_pages(arm9_cpu *cpu, u8 **pt, u8 (*tt)[4], u64 end)
 {
 	bool null_page = end < arm_cpu::PAGE_SIZE;
 
@@ -365,6 +474,14 @@ map_itcm_pages(arm9_cpu *cpu, u8 **pt, u64 end)
 		u64 page = addr >> arm_cpu::PAGE_SHIFT;
 		pt[page] = null_page ? nullptr
 		                     : &cpu->itcm[addr & cpu->itcm_array_mask];
+	}
+
+	for (u64 addr = 0; addr < end; addr += arm9_cpu::TIME_PAGE_SIZE) {
+		u64 page = addr >> arm9_cpu::TIME_PAGE_SHIFT;
+		tt[page][0] = 1;
+		tt[page][1] = 1;
+		tt[page][2] = 1;
+		tt[page][3] = 1;
 	}
 }
 

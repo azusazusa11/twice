@@ -53,6 +53,8 @@ arm_misc_dt(arm_cpu *cpu)
 			value = cpu->ldrsh(address);
 		}
 
+		cpu->add_cycles_cdi();
+
 		if (rd == 15) {
 			cpu->arm_jump(value & ~3);
 		} else {
@@ -70,6 +72,8 @@ arm_misc_dt(arm_cpu *cpu)
 		if (writeback) {
 			cpu->gpr[rn] += offset;
 		}
+
+		cpu->add_cycles_cd();
 	} else if (L == 0 && S == 1 && H == 0) {
 		if (writeback) {
 			cpu->gpr[rn] += offset;
@@ -81,17 +85,22 @@ arm_misc_dt(arm_cpu *cpu)
 				rd &= ~1;
 			}
 
-			cpu->gpr[rd] = cpu->load32(address & ~3);
-			u32 value = cpu->load32((address & ~3) + 4);
+			cpu->gpr[rd] = cpu->load32n(address & ~3);
+			u32 value = cpu->load32s((address & ~3) + 4);
+
+			cpu->add_cycles_cdi();
 
 			if (rd + 1 == 15) {
 				cpu->arm_jump(value & ~3);
 			} else {
 				cpu->gpr[rd + 1] = value;
 			}
+		} else {
+			cpu->add_cycles_c();
 		}
 	} else if (L == 0 && S == 1 && H == 1) {
 		if (is_arm7(cpu)) {
+			cpu->add_cycles_c();
 			return;
 		}
 
@@ -100,18 +109,20 @@ arm_misc_dt(arm_cpu *cpu)
 			rd &= ~1;
 		}
 
-		cpu->store32(address & ~3, cpu->gpr[rd]);
+		cpu->store32n(address & ~3, cpu->gpr[rd]);
 		u32 value = cpu->gpr[rd + 1];
 
 		if (rd + 1 == 15) {
 			value += 4;
 		}
 
-		cpu->store32((address & ~3) + 4, value);
+		cpu->store32s((address & ~3) + 4, value);
 
 		if (writeback) {
 			cpu->gpr[rn] += offset;
 		}
+
+		cpu->add_cycles_cd();
 	}
 }
 } // namespace twice::arm::interpreter

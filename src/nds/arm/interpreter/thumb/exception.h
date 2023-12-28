@@ -17,6 +17,7 @@ thumb_undefined(arm_cpu *cpu)
 
 	cpu->gpr[14] = cpu->pc() - 2;
 	cpu->spsr() = old_cpsr;
+	cpu->add_cycles_c(1);
 	cpu->arm_jump(cpu->exception_base + 0x4);
 }
 
@@ -32,6 +33,7 @@ thumb_swi(arm_cpu *cpu)
 
 	cpu->gpr[14] = cpu->pc() - 2;
 	cpu->spsr() = old_cpsr;
+	cpu->add_cycles_c();
 	cpu->arm_jump(cpu->exception_base + 0x8);
 }
 

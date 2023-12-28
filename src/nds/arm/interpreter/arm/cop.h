@@ -19,23 +19,25 @@ arm_cop_reg(arm_cpu *cpu)
 	if (L == 0) {
 		if (is_arm7(cpu)) {
 			LOG("arm7 mcr\n");
+			cpu->add_cycles_c();
 			return;
-		}
+		} else {
+			if (cp_num != 15) {
+				throw twice_error("arm9 mcr cp_num != 15");
+			}
 
-		if (cp_num != 15) {
-			throw twice_error("arm9 mcr cp_num != 15");
-		}
+			if (OP1 != 0) {
+				throw twice_error("arm9 mcr op1 != 0");
+			}
 
-		if (OP1 != 0) {
-			throw twice_error("arm9 mcr op1 != 0");
+			u32 reg = cn << 8 | cm << 4 | OP2;
+			u32 value = cpu->gpr[rd];
+			if (rd == 15) {
+				value += 4;
+			}
+			cp15_write((arm9_cpu *)cpu, reg, value);
+			cpu->add_cycles_c(2);
 		}
-
-		u32 reg = cn << 8 | cm << 4 | OP2;
-		u32 value = cpu->gpr[rd];
-		if (rd == 15) {
-			value += 4;
-		}
-		cp15_write((arm9_cpu *)cpu, reg, value);
 	} else {
 		u32 value;
 
@@ -73,6 +75,8 @@ arm_cop_reg(arm_cpu *cpu)
 		} else {
 			cpu->gpr[rd] = value;
 		}
+
+		cpu->add_cycles_c(3);
 	}
 }
 

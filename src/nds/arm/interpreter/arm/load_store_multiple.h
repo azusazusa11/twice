@@ -14,6 +14,7 @@ arm_block_dt(arm_cpu *cpu)
 	u32 offset = 4 * std::popcount(register_list);
 
 	u32 addr;
+	u32 jump_addr;
 	u32 writeback_value;
 
 	if (register_list == 0) {
@@ -41,23 +42,32 @@ arm_block_dt(arm_cpu *cpu)
 		LOG("writeback with pc as base\n");
 	}
 
+	bool nonseq = true;
+
 	if (L == 1) {
 		bool cpsr_written = false;
 
 		if (S == 0) {
 			TWICE_ARM_LDM_(0, 14, cpu->gpr, 0);
 
-			if (register_list >> 15) {
-				u32 value = cpu->load32(addr);
-				if (!is_arm7(cpu)) {
-					arm_do_bx(cpu, value);
-				} else {
-					cpu->arm_jump(value & ~3);
-				}
+			bool jump = (register_list >> 15) ||
+			            (is_arm7(cpu) && register_list == 0);
+			if (jump) {
+				jump_addr = cpu->load32(addr, nonseq);
 			}
 
-			if (is_arm7(cpu) && register_list == 0) {
-				cpu->arm_jump(cpu->load32(addr) & ~3);
+			cpu->add_cycles_cdi();
+
+			if (jump) {
+				if (register_list >> 1) {
+					if (!is_arm7(cpu)) {
+						arm_do_bx(cpu, jump_addr);
+					} else {
+						cpu->arm_jump(jump_addr & ~3);
+					}
+				} else {
+					cpu->arm_jump(jump_addr & ~3);
+				}
 			}
 		} else if (!(register_list >> 15)) {
 			TWICE_ARM_LDM_(0, 7, cpu->gpr, 0);
@@ -74,13 +84,22 @@ arm_block_dt(arm_cpu *cpu)
 				TWICE_ARM_LDM_(13, 14, cpu->bankedr[0], -13);
 			}
 
-			if (is_arm7(cpu) && register_list == 0) {
-				cpu->arm_jump(cpu->load32(addr) & ~3);
+			bool jump = is_arm7(cpu) && register_list == 0;
+			if (jump) {
+				jump_addr = cpu->load32n(addr);
+			}
+
+			cpu->add_cycles_cdi();
+
+			if (jump) {
+				cpu->arm_jump(jump_addr & ~3);
 			}
 		} else {
 			TWICE_ARM_LDM_(0, 14, cpu->gpr, 0);
 
-			u32 value = cpu->load32(addr);
+			u32 value = cpu->load32(addr, nonseq);
+			cpu->add_cycles_cdi();
+
 			cpu->cpsr = cpu->spsr();
 			if (cpu->cpsr & 0x20) {
 				cpu->thumb_jump(value & ~1);
@@ -144,16 +163,18 @@ arm_block_dt(arm_cpu *cpu)
 		}
 
 		if (register_list >> 15) {
-			cpu->store32(addr, cpu->pc() + 4);
+			cpu->store32(addr, cpu->pc() + 4, nonseq);
 		}
 
 		if (is_arm7(cpu) && register_list == 0) {
-			cpu->store32(addr, cpu->pc() + 4);
+			cpu->store32n(addr, cpu->pc() + 4);
 		}
 
 		if (writeback) {
 			cpu->gpr[rn] = writeback_value;
 		}
+
+		cpu->add_cycles_cd();
 	}
 }
 

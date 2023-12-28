@@ -6,6 +6,9 @@
 
 namespace twice {
 
+u8 gba_rom_nonseq_timings[4] = { 10, 8, 6, 18 };
+u8 gba_rom_seq_timings[2] = { 6, 4 };
+
 void
 exmem_write(nds_ctx *nds, int cpuid, u16 value)
 {
