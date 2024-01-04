@@ -82,6 +82,7 @@ arm7_cpu::step()
 
 	*curr_cycles += cycles;
 	cycles = 0;
+	code_cycles = 0;
 }
 
 static bool
